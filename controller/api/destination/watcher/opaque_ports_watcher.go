@@ -3,10 +3,13 @@ package watcher
 import (
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/linkerd/linkerd2/controller/k8s"
 	labels "github.com/linkerd/linkerd2/pkg/k8s"
 	"github.com/linkerd/linkerd2/pkg/util"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	logging "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -19,6 +22,7 @@ type (
 	OpaquePortsWatcher struct {
 		subscriptions      map[ServiceID]*svcSubscriptions
 		k8sAPI             *k8s.API
+		subscribersGauge   *prometheus.GaugeVec
 		log                *logging.Entry
 		defaultOpaquePorts map[uint32]struct{}
 		sync.RWMutex
@@ -35,21 +39,34 @@ type (
 	}
 )
 
+var opaquePortsMetrics = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "service_subscribers",
+		Help: "Number of subscribers to Service changes.",
+	},
+	[]string{"namespace", "name"},
+)
+
 // NewOpaquePortsWatcher creates a OpaquePortsWatcher and begins watching for
 // k8sAPI for service changes.
-func NewOpaquePortsWatcher(k8sAPI *k8s.API, log *logging.Entry, opaquePorts map[uint32]struct{}) *OpaquePortsWatcher {
+func NewOpaquePortsWatcher(k8sAPI *k8s.API, log *logging.Entry, opaquePorts map[uint32]struct{}) (*OpaquePortsWatcher, error) {
 	opw := &OpaquePortsWatcher{
 		subscriptions:      make(map[ServiceID]*svcSubscriptions),
 		k8sAPI:             k8sAPI,
+		subscribersGauge:   opaquePortsMetrics,
 		log:                log.WithField("component", "opaque-ports-watcher"),
 		defaultOpaquePorts: opaquePorts,
 	}
-	k8sAPI.Svc().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := k8sAPI.Svc().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    opw.addService,
 		DeleteFunc: opw.deleteService,
-		UpdateFunc: func(_, obj interface{}) { opw.addService(obj) },
+		UpdateFunc: opw.updateService,
 	})
-	return opw
+	if err != nil {
+		return nil, err
+	}
+
+	return opw, nil
 }
 
 // Subscribe subscribes a listener to a service; each time the service
@@ -63,21 +80,27 @@ func (opw *OpaquePortsWatcher) Subscribe(id ServiceID, listener OpaquePortsUpdat
 		return invalidService(id.String())
 	}
 	opw.log.Debugf("Starting watch on service %s", id)
+	var numListeners float64
 	ss, ok := opw.subscriptions[id]
-	// If there is no watched service, create a subscription for the service
-	// and no opaque ports
 	if !ok {
+		// If there is no watched service, create a subscription for the service
+		// and no opaque ports
 		opw.subscriptions[id] = &svcSubscriptions{
 			opaquePorts: opw.defaultOpaquePorts,
 			listeners:   []OpaquePortsUpdateListener{listener},
 		}
-		return nil
+		numListeners = 1
+	} else {
+		// There are subscriptions for this service, so add the listener to the
+		// service listeners. If there are opaque ports for the service, update
+		// the listener with that value.
+		ss.listeners = append(ss.listeners, listener)
+		listener.UpdateService(ss.opaquePorts)
+		numListeners = float64(len(ss.listeners))
 	}
-	// There are subscriptions for this service, so add the listener to the
-	// service listeners. If there are opaque ports for the service, update
-	// the listener with that value.
-	ss.listeners = append(ss.listeners, listener)
-	listener.UpdateService(ss.opaquePorts)
+
+	opw.subscribersGauge.With(id.Labels()).Set(numListeners)
+
 	return nil
 }
 
@@ -99,6 +122,29 @@ func (opw *OpaquePortsWatcher) Unsubscribe(id ServiceID, listener OpaquePortsUpd
 			ss.listeners = ss.listeners[:n-1]
 		}
 	}
+
+	labels := id.Labels()
+	if len(ss.listeners) > 0 {
+		opw.subscribersGauge.With(labels).Set(float64(len(ss.listeners)))
+	} else {
+		if !opw.subscribersGauge.Delete(labels) {
+			opw.log.Warnf("unable to delete service_subscribers metric with labels %s", labels)
+		}
+		delete(opw.subscriptions, id)
+	}
+}
+
+func (opw *OpaquePortsWatcher) updateService(oldObj interface{}, newObj interface{}) {
+	newSvc := newObj.(*corev1.Service)
+	oldSvc := oldObj.(*corev1.Service)
+
+	oldUpdated := latestUpdated(oldSvc.ManagedFields)
+	updated := latestUpdated(newSvc.ManagedFields)
+	if !updated.IsZero() && updated != oldUpdated {
+		delta := time.Since(updated)
+		serviceInformerLag.Observe(delta.Seconds())
+	}
+	opw.addService(newObj)
 }
 
 func (opw *OpaquePortsWatcher) addService(obj interface{}) {

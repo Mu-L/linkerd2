@@ -18,7 +18,6 @@ import (
 	"github.com/linkerd/linkerd2/pkg/inject"
 	"github.com/linkerd/linkerd2/pkg/issuercerts"
 	"github.com/linkerd/linkerd2/pkg/k8s"
-	consts "github.com/linkerd/linkerd2/pkg/k8s"
 	"github.com/linkerd/linkerd2/pkg/tls"
 	"github.com/linkerd/linkerd2/pkg/version"
 	log "github.com/sirupsen/logrus"
@@ -79,6 +78,12 @@ func makeInstallUpgradeFlags(defaults *l5dcharts.Values) ([]flag.Flag, *pflag.Fl
 		flag.NewInt64Flag(installUpgradeFlags, "controller-uid", defaults.ControllerUID,
 			"Run the control plane components under this user ID", func(values *l5dcharts.Values, value int64) error {
 				values.ControllerUID = value
+				return nil
+			}),
+
+		flag.NewInt64Flag(installUpgradeFlags, "controller-gid", defaults.ControllerGID,
+			"Run the control plane components under this group ID", func(values *l5dcharts.Values, value int64) error {
+				values.ControllerGID = value
 				return nil
 			}),
 
@@ -234,7 +239,7 @@ func makeInstallFlags(defaults *l5dcharts.Values) ([]flag.Flag, *pflag.FlagSet) 
 				if value {
 					values.Identity.Issuer.Scheme = string(corev1.SecretTypeTLS)
 				} else {
-					values.Identity.Issuer.Scheme = consts.IdentityIssuerSchemeLinkerd
+					values.Identity.Issuer.Scheme = k8s.IdentityIssuerSchemeLinkerd
 				}
 				return nil
 			}),
@@ -253,7 +258,6 @@ func makeInstallFlags(defaults *l5dcharts.Values) ([]flag.Flag, *pflag.FlagSet) 
 // configured.  These flags are available to the inject command and to the
 // install and upgrade commands.
 func makeProxyFlags(defaults *l5dcharts.Values) ([]flag.Flag, *pflag.FlagSet) {
-
 	proxyFlags := pflag.NewFlagSet("proxy", pflag.ExitOnError)
 
 	flags := []flag.Flag{
@@ -311,6 +315,12 @@ func makeProxyFlags(defaults *l5dcharts.Values) ([]flag.Flag, *pflag.FlagSet) {
 		flag.NewInt64Flag(proxyFlags, "proxy-uid", defaults.Proxy.UID, "Run the proxy under this user ID",
 			func(values *l5dcharts.Values, value int64) error {
 				values.Proxy.UID = value
+				return nil
+			}),
+
+		flag.NewInt64Flag(proxyFlags, "proxy-gid", defaults.Proxy.GID, "Run the proxy under this group ID",
+			func(values *l5dcharts.Values, value int64) error {
+				values.Proxy.GID = value
 				return nil
 			}),
 
@@ -398,7 +408,7 @@ func makeProxyFlags(defaults *l5dcharts.Values) ([]flag.Flag, *pflag.FlagSet) {
 			}),
 	}
 
-	registryFlag := flag.NewStringFlag(proxyFlags, "registry", defaultDockerRegistry,
+	registryFlag := flag.NewStringFlag(proxyFlags, "registry", cmd.DefaultDockerRegistry,
 		fmt.Sprintf("Docker registry to pull images from ($%s)", flagspkg.EnvOverrideDockerRegistry),
 		func(values *l5dcharts.Values, value string) error {
 			values.ControllerImage = cmd.RegistryOverride(values.ControllerImage, value)
@@ -442,6 +452,12 @@ func makeInjectFlags(defaults *l5dcharts.Values) ([]flag.Flag, *pflag.FlagSet) {
 	injectFlags := pflag.NewFlagSet("inject", pflag.ExitOnError)
 
 	flags := []flag.Flag{
+		flag.NewBoolFlag(injectFlags, "native-sidecar", false, "Enable native sidecar",
+			func(values *l5dcharts.Values, value bool) error {
+				values.Proxy.NativeSidecar = value
+				return nil
+			}),
+
 		flag.NewInt64Flag(injectFlags, "wait-before-exit-seconds", int64(defaults.Proxy.WaitBeforeExitSeconds),
 			"The period during which the proxy sidecar must stay alive while its pod is terminating. "+
 				"Must be smaller than terminationGracePeriodSeconds for the pod (default 0)",
@@ -486,7 +502,7 @@ func validateValues(ctx context.Context, k *k8s.KubernetesAPI, values *l5dcharts
 	}
 
 	if _, err := log.ParseLevel(values.ControllerLogLevel); err != nil {
-		return fmt.Errorf("--controller-log-level must be one of: panic, fatal, error, warn, info, debug")
+		return fmt.Errorf("--controller-log-level must be one of: panic, fatal, error, warn, info, debug, trace")
 	}
 
 	if values.Proxy.LogLevel == "" {
@@ -532,7 +548,7 @@ func validateValues(ctx context.Context, k *k8s.KubernetesAPI, values *l5dcharts
 		}
 	}
 
-	if values.Identity.Issuer.Scheme == consts.IdentityIssuerSchemeLinkerd {
+	if values.Identity.Issuer.Scheme == k8s.IdentityIssuerSchemeLinkerd {
 		issuerData := issuercerts.IssuerCertData{
 			IssuerCrt:    values.Identity.Issuer.TLS.CrtPEM,
 			IssuerKey:    values.Identity.Issuer.TLS.KeyPEM,
@@ -630,7 +646,7 @@ func validateProxyValues(values *l5dcharts.Values) error {
 }
 
 func validatePolicy(policy string) error {
-	validPolicies := []string{"all-authenticated", "all-unauthenticated", "cluster-authenticated", "cluster-unauthenticated", "deny"}
+	validPolicies := []string{"all-authenticated", "all-unauthenticated", "cluster-authenticated", "cluster-unauthenticated", "deny", "audit"}
 	for _, p := range validPolicies {
 		if p == policy {
 			return nil

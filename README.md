@@ -52,20 +52,6 @@ contributing changes.
   list][linkerd-dev], and [announcements mailing list][linkerd-announce].
 * Follow [@Linkerd][twitter] on Twitter.
 * Join the [Linkerd Slack][slack].
-* Join us in the regular online community meetings!
-
-## Community meetings
-
-We host regular online meetings for contributors, adopters, maintainers, and
-anyone else interested to connect in a synchronous fashion. These meetings
-usually take place the last Thursday of the month at 9am Pacific / 4pm UTC.
-
-* [Zoom link](https://zoom.us/my/cncflinkerd)
-* [Google calendar](https://calendar.google.com/calendar/embed?src=buoyant.io_j28ik70vrl3418f4oldkdici7o%40group.calendar.google.com)
-* [Minutes from previous meetings](https://docs.google.com/document/d/1OvXYL5Q53klQFZPokQJas72YqkWXplkPQUguFbRW7Wo/edit)
-* [Recordings from previous meetings](https://www.youtube.com/playlist?list=PLI9FkLPXDscBHP91Ud3lyJScI4ZCjRG6F)
-
-We're a friendly group, so please feel free to join us!
 
 ## Steering Committee meetings
 
@@ -88,12 +74,12 @@ minutes to review our [Code of Conduct][CoC].
 See [SECURITY.md](SECURITY.md) for our security policy, including how to report
 vulnerabilities.
 
-A third party security audit was performed by Cure53 in June 2019. You can see
-the full report [here](SECURITY_AUDIT.pdf).
+Linkerd undergoes periodic third-party security audits and we
+[publish the results here](https://github.com/linkerd/linkerd2/tree/main/audits).
 
 ## License
 
-Copyright 2021 the Linkerd Authors. All rights reserved.
+Copyright 2023 the Linkerd Authors. All rights reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use
 these files except in compliance with the License. You may obtain a copy of the
@@ -108,7 +94,7 @@ specific language governing permissions and limitations under the License.
 
 <!-- refs -->
 [github-actions]: https://github.com/linkerd/linkerd2/actions
-[github-actions-badge]: https://github.com/linkerd/linkerd2/workflows/Cloud%20integration/badge.svg
+[github-actions-badge]: https://github.com/linkerd/linkerd2/actions/workflows/actions.yml/badge.svg
 [cncf]: https://www.cncf.io/
 [CoC]: https://github.com/linkerd/linkerd/wiki/Linkerd-code-of-conduct
 [getting-started]: https://linkerd.io/2/getting-started/

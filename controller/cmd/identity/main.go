@@ -20,6 +20,7 @@ import (
 	"github.com/linkerd/linkerd2/pkg/tls"
 	"github.com/linkerd/linkerd2/pkg/trace"
 	log "github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -40,6 +41,8 @@ func Main(args []string) {
 	identityIssuanceLifeTime := cmd.String("identity-issuance-lifetime", "", "the amount of time for which the Identity issuer should certify identity")
 	identityClockSkewAllowance := cmd.String("identity-clock-skew-allowance", "", "the amount of time to allow for clock skew within a Linkerd cluster")
 	enablePprof := cmd.Bool("enable-pprof", false, "Enable pprof endpoints on the admin server")
+	qps := cmd.Float64("kube-apiclient-qps", 100, "Maximum QPS sent to the kube-apiserver before throttling")
+	burst := cmd.Int("kube-apiclient-burst", 200, "Burst value over kube-apiclient-qps")
 
 	issuerPath := cmd.String("issuer",
 		"/var/run/linkerd/identity/issuer",
@@ -51,6 +54,16 @@ func Main(args []string) {
 	componentName := "linkerd-identity"
 
 	flags.ConfigureAndParse(cmd, args)
+
+	ready := false
+	adminServer := admin.NewServer(*adminAddr, *enablePprof, &ready)
+
+	go func() {
+		log.Infof("starting admin server on %s", *adminAddr)
+		if err := adminServer.ListenAndServe(); err != nil {
+			log.Errorf("failed to start identity admin server: %s", err)
+		}
+	}()
 
 	identityTrustAnchorPEM, err := os.ReadFile(k8s.MountPathTrustRootsPEM)
 	if err != nil {
@@ -127,10 +140,16 @@ func Main(args []string) {
 	//
 	// Create k8s API
 	//
-	k8sAPI, err := k8s.NewAPI(*kubeConfigPath, "", "", []string{}, 0)
+	config, err := k8s.GetConfig(*kubeConfigPath, "")
+	if err != nil {
+		log.Fatalf("Error configuring Kubernetes API client: %s", err)
+	}
+	k8sAPI, err := k8s.NewAPIForConfig(config, "", []string{}, 0, float32(*qps), *burst)
 	if err != nil {
 		log.Fatalf("Failed to load kubeconfig: %s: %s", *kubeConfigPath, err)
 	}
+	log.Infof("Using k8s client with QPS=%.2f Burst=%d", config.QPS, config.Burst)
+
 	v, err := idctl.NewK8sTokenValidator(ctx, k8sAPI, dom)
 	if err != nil {
 		log.Fatalf("Failed to initialize identity service: %s", err)
@@ -174,15 +193,6 @@ func Main(args []string) {
 	//
 	// Bind and serve
 	//
-	adminServer := admin.NewServer(*adminAddr, *enablePprof)
-
-	go func() {
-		log.Infof("starting admin server on %s", *adminAddr)
-		if err := adminServer.ListenAndServe(); err != nil {
-			log.Errorf("failed to start identity admin server: %s", err)
-		}
-	}()
-
 	lis, err := net.Listen("tcp", *addr)
 	if err != nil {
 		//nolint:gocritic
@@ -194,7 +204,7 @@ func Main(args []string) {
 			log.Warnf("failed to initialize tracing: %s", err)
 		}
 	}
-	srv := prometheus.NewGrpcServer()
+	srv := prometheus.NewGrpcServer(grpc.MaxConcurrentStreams(0))
 	identity.Register(srv, svc)
 	go func() {
 		log.Infof("starting gRPC server on %s", *addr)
@@ -202,6 +212,9 @@ func Main(args []string) {
 			log.Errorf("failed to start identity gRPC server: %s", err)
 		}
 	}()
+
+	ready = true
+
 	<-stop
 	log.Infof("shutting down gRPC server on %s", *addr)
 	srv.GracefulStop()

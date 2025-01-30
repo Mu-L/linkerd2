@@ -14,10 +14,11 @@ import (
 
 	pkgcmd "github.com/linkerd/linkerd2/pkg/cmd"
 	"github.com/linkerd/linkerd2/pkg/healthcheck"
-	"github.com/linkerd/linkerd2/pkg/k8s"
 	pb "github.com/linkerd/linkerd2/viz/metrics-api/gen/viz"
 	"github.com/linkerd/linkerd2/viz/metrics-api/util"
 	"github.com/linkerd/linkerd2/viz/pkg/api"
+	hc "github.com/linkerd/linkerd2/viz/pkg/healthcheck"
+
 	pkgUtil "github.com/linkerd/linkerd2/viz/pkg/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -75,13 +76,16 @@ This command will only display traffic which is sent to a service that has a Ser
 			}
 
 			output, err := requestRouteStatsFromAPI(
-				api.CheckClientOrExit(healthcheck.Options{
-					ControlPlaneNamespace: controlPlaneNamespace,
-					KubeConfig:            kubeconfigPath,
-					Impersonate:           impersonate,
-					ImpersonateGroup:      impersonateGroup,
-					KubeContext:           kubeContext,
-					APIAddr:               apiAddr,
+				api.CheckClientOrExit(hc.VizOptions{
+					Options: &healthcheck.Options{
+						ControlPlaneNamespace: controlPlaneNamespace,
+						KubeConfig:            kubeconfigPath,
+						Impersonate:           impersonate,
+						ImpersonateGroup:      impersonateGroup,
+						KubeContext:           kubeContext,
+						APIAddr:               apiAddr,
+					},
+					VizNamespaceOverride: vizNamespace,
 				}),
 				req,
 				options,
@@ -374,7 +378,7 @@ func buildTopRoutesRequest(resource string, options *routesOptions) (*pb.TopRout
 		LabelSelector: options.labelSelector,
 	}
 
-	options.dstIsService = target.GetType() != k8s.Authority
+	options.dstIsService = true
 
 	if options.toResource != "" {
 		if options.toNamespace == "" {
@@ -385,7 +389,7 @@ func buildTopRoutesRequest(resource string, options *routesOptions) (*pb.TopRout
 			return nil, err
 		}
 
-		options.dstIsService = toRes.GetType() != k8s.Authority
+		options.dstIsService = true
 
 		requestParams.ToName = toRes.Name
 		requestParams.ToNamespace = toRes.Namespace

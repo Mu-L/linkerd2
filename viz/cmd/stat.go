@@ -11,13 +11,13 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/linkerd/linkerd2/pkg/cmd"
 	pkgcmd "github.com/linkerd/linkerd2/pkg/cmd"
 	"github.com/linkerd/linkerd2/pkg/healthcheck"
 	"github.com/linkerd/linkerd2/pkg/k8s"
 	pb "github.com/linkerd/linkerd2/viz/metrics-api/gen/viz"
 	"github.com/linkerd/linkerd2/viz/metrics-api/util"
 	"github.com/linkerd/linkerd2/viz/pkg/api"
+	hc "github.com/linkerd/linkerd2/viz/pkg/healthcheck"
 	pkgUtil "github.com/linkerd/linkerd2/viz/pkg/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -230,13 +230,16 @@ If no resource name is specified, displays stats about all resources of the spec
 
 			// The gRPC client is concurrency-safe, so we can reuse it in all the following goroutines
 			// https://github.com/grpc/grpc-go/issues/682
-			client := api.CheckClientOrExit(healthcheck.Options{
-				ControlPlaneNamespace: controlPlaneNamespace,
-				KubeConfig:            kubeconfigPath,
-				Impersonate:           impersonate,
-				ImpersonateGroup:      impersonateGroup,
-				KubeContext:           kubeContext,
-				APIAddr:               apiAddr,
+			client := api.CheckClientOrExit(hc.VizOptions{
+				Options: &healthcheck.Options{
+					ControlPlaneNamespace: controlPlaneNamespace,
+					KubeConfig:            kubeconfigPath,
+					Impersonate:           impersonate,
+					ImpersonateGroup:      impersonateGroup,
+					KubeContext:           kubeContext,
+					APIAddr:               apiAddr,
+				},
+				VizNamespaceOverride: vizNamespace,
 			})
 
 			c := make(chan indexedResults, len(reqs))
@@ -369,7 +372,7 @@ func statHasRequestData(stat *pb.BasicStats) bool {
 }
 
 func isPodOwnerResource(typ string) bool {
-	return typ != k8s.Authority && typ != k8s.Service && typ != k8s.Server && typ != k8s.ServerAuthorization && typ != k8s.AuthorizationPolicy && typ != k8s.HTTPRoute
+	return typ != k8s.Service && typ != k8s.Server && typ != k8s.ServerAuthorization && typ != k8s.AuthorizationPolicy && typ != k8s.HTTPRoute
 }
 
 func writeStatsToBuffer(rows []*pb.StatTable_PodGroup_Row, w *tabwriter.Writer, options *statOptions) {
@@ -430,7 +433,7 @@ func writeStatsToBuffer(rows []*pb.StatTable_PodGroup_Row, w *tabwriter.Writer, 
 		statTables[resourceKey][key] = &row{}
 		if resourceKey != k8s.Server && resourceKey != k8s.ServerAuthorization {
 			meshedCount := fmt.Sprintf("%d/%d", r.MeshedPodCount, r.RunningPodCount)
-			if resourceKey == k8s.Authority || resourceKey == k8s.Service {
+			if resourceKey == k8s.Service {
 				meshedCount = "-"
 			}
 			statTables[resourceKey][key] = &row{
@@ -500,7 +503,7 @@ func showTCPBytes(options *statOptions, resourceType string) bool {
 }
 
 func showTCPConns(resourceType string) bool {
-	return resourceType != k8s.Authority && resourceType != k8s.ServerAuthorization && resourceType != k8s.AuthorizationPolicy && resourceType != k8s.HTTPRoute
+	return resourceType != k8s.ServerAuthorization && resourceType != k8s.AuthorizationPolicy && resourceType != k8s.HTTPRoute
 }
 
 func printSingleStatTable(stats map[string]*row, resourceTypeLabel, resourceType string, w *tabwriter.Writer, maxNameLength, maxNamespaceLength, maxLeafLength, maxApexLength, maxDstLength, maxWeightLength int, options *statOptions) {
@@ -904,7 +907,7 @@ func (o *statOptions) validateConflictingFlags() error {
 		return fmt.Errorf("--to-namespace and --from-namespace flags are mutually exclusive")
 	}
 
-	if o.allNamespaces && o.namespace != cmd.GetDefaultNamespace(kubeconfigPath, kubeContext) {
+	if o.allNamespaces && o.namespace != pkgcmd.GetDefaultNamespace(kubeconfigPath, kubeContext) {
 		return fmt.Errorf("--all-namespaces and --namespace flags are mutually exclusive")
 	}
 
@@ -924,7 +927,7 @@ func (o *statOptions) validateNamespaceFlags() error {
 
 	// Note: technically, this allows you to say `stat ns --namespace <default-namespace-from-kubectl-context>`, but that
 	// seems like an edge case.
-	if o.namespace != cmd.GetDefaultNamespace(kubeconfigPath, kubeContext) {
+	if o.namespace != pkgcmd.GetDefaultNamespace(kubeconfigPath, kubeContext) {
 		return fmt.Errorf("--namespace flag is incompatible with namespace resource type")
 	}
 

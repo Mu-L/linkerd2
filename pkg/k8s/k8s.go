@@ -12,16 +12,19 @@ import (
 // These constants are string representations of Kubernetes resource types.
 const (
 	All                   = "all"
-	Authority             = "authority"
 	ConfigMap             = "configmap"
 	CronJob               = "cronjob"
 	DaemonSet             = "daemonset"
 	Deployment            = "deployment"
 	Endpoints             = "endpoints"
 	EndpointSlices        = "endpointslices"
+	ExtWorkload           = "externalworkload"
 	Job                   = "job"
+	Link                  = "link"
+	MeshTLSAuthentication = "meshtlsauthentication"
 	MutatingWebhookConfig = "mutatingwebhookconfig"
 	Namespace             = "namespace"
+	NetworkAuthentication = "networkauthentication"
 	Pod                   = "pod"
 	ReplicationController = "replicationcontroller"
 	ReplicaSet            = "replicaset"
@@ -35,22 +38,27 @@ const (
 	AuthorizationPolicy   = "authorizationpolicy"
 	HTTPRoute             = "httproute"
 
-	PolicyAPIGroup   = "policy.linkerd.io"
-	PolicyAPIVersion = "v1beta1"
+	PolicyAPIGroup         = "policy.linkerd.io"
+	PolicyServerCRDVersion = "v1beta3"
 
 	ServiceProfileAPIVersion = "linkerd.io/v1alpha2"
 	ServiceProfileKind       = "ServiceProfile"
 
 	LinkAPIGroup        = "multicluster.linkerd.io"
-	LinkAPIVersion      = "v1alpha1"
-	LinkAPIGroupVersion = "multicluster.linkerd.io/v1alpha1"
+	LinkAPIVersion      = "v1alpha2"
+	LinkAPIGroupVersion = "multicluster.linkerd.io/v1alpha2"
 	LinkKind            = "Link"
 
 	K8sCoreAPIGroup = "core"
 
-	NamespaceKind = "Namespace"
-	ServerKind    = "Server"
-	HTTPRouteKind = "HTTPRoute"
+	NamespaceKind   = "Namespace"
+	ServerKind      = "Server"
+	HTTPRouteKind   = "HTTPRoute"
+	ExtWorkloadKind = "ExternalWorkload"
+	PodKind         = "Pod"
+
+	WorkloadAPIGroup   = "workload.linkerd.io"
+	WorkloadAPIVersion = "v1alpha1"
 
 	// special case k8s job label, to not conflict with Prometheus' job label
 	l5dJob = "k8s_job"
@@ -64,7 +72,6 @@ type resourceName struct {
 
 // AllResources is a sorted list of all resources defined as constants above.
 var AllResources = []string{
-	Authority,
 	AuthorizationPolicy,
 	CronJob,
 	DaemonSet,
@@ -91,7 +98,6 @@ var StatAllResourceTypes = []string{
 	ReplicationController,
 	Pod,
 	Service,
-	Authority,
 	CronJob,
 	ReplicaSet,
 }
@@ -106,27 +112,31 @@ var CompletionResourceTypes = []string{
 	ReplicationController,
 	Pod,
 	Service,
-	Authority,
 	CronJob,
 	ReplicaSet,
 }
 
 var resourceNames = []resourceName{
-	{"au", "authority", "authorities"},
 	{"cj", "cronjob", "cronjobs"},
 	{"ds", "daemonset", "daemonsets"},
 	{"deploy", "deployment", "deployments"},
 	{"job", "job", "jobs"},
+	{"meshtlsauthn", "meshtlsauthentication", "meshtlsauthentications"},
 	{"ns", "namespace", "namespaces"},
+	{"netauthn", "networkauthentication", "networkauthentications"},
+	{"networkauthn", "networkauthentication", "networkauthentications"},
 	{"po", "pod", "pods"},
 	{"rc", "replicationcontroller", "replicationcontrollers"},
 	{"rs", "replicaset", "replicasets"},
 	{"svc", "service", "services"},
 	{"sp", "serviceprofile", "serviceprofiles"},
 	{"saz", "serverauthorization", "serverauthorizations"},
+	{"serverauthz", "serverauthorization", "serverauthorizations"},
+	{"srvauthz", "serverauthorization", "serverauthorizations"},
 	{"srv", "server", "servers"},
 	{"ap", "authorizationpolicy", "authorizationpolicies"},
-	{"route", "httproute", "httproutes"},
+	{"httproute", "httproute", "httproutes"},
+	{"authzpolicy", "authorizationpolicy", "authorizationpolicies"},
 	{"sts", "statefulset", "statefulsets"},
 	{"ln", "link", "links"},
 	{"all", "all", "all"},
@@ -175,8 +185,6 @@ func PluralResourceNameFromFriendlyName(friendlyName string) (string, error) {
 // Essentially the reverse of CanonicalResourceNameFromFriendlyName
 func ShortNameFromCanonicalResourceName(canonicalName string) string {
 	switch canonicalName {
-	case Authority:
-		return "au"
 	case CronJob:
 		return "cj"
 	case DaemonSet:
@@ -206,8 +214,9 @@ func ShortNameFromCanonicalResourceName(canonicalName string) string {
 
 // KindToL5DLabel converts a Kubernetes `kind` to a Linkerd label.
 // For example:
-//   `pod` -> `pod`
-//   `job` -> `k8s_job`
+//
+//	`pod` -> `pod`
+//	`job` -> `k8s_job`
 func KindToL5DLabel(k8sKind string) string {
 	if k8sKind == Job {
 		return l5dJob
@@ -224,7 +233,8 @@ func PodIdentity(pod *corev1.Pod) (string, error) {
 
 	podsa := pod.Spec.ServiceAccountName
 	podns := pod.ObjectMeta.Namespace
-	for _, c := range pod.Spec.Containers {
+	containers := append(pod.Spec.InitContainers, pod.Spec.Containers...)
+	for _, c := range containers {
 		if c.Name == ProxyContainerName {
 			for _, env := range c.Env {
 				if env.Name == "LINKERD2_PROXY_IDENTITY_LOCAL_NAME" {
