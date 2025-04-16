@@ -28,6 +28,7 @@ import (
 	valuespkg "helm.sh/helm/v3/pkg/cli/values"
 	"helm.sh/helm/v3/pkg/engine"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -146,7 +147,7 @@ A full list of configurable values can be found at https://artifacthub.io/packag
 						},
 					}, "yaml")
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "%q", err)
+						fmt.Fprintln(os.Stderr, err)
 						os.Exit(1)
 					}
 					err = healthcheck.CheckCustomResourceDefinitions(cmd.Context(), k8sAPI, crds.String())
@@ -229,6 +230,9 @@ func checkGatewayAPICRDs(ctx context.Context, k8sAPI *k8s.KubernetesAPI) (Gatewa
 				return Linkerd, nil
 			}
 			result = External
+			if !crdIncludesV1(crd) {
+				return result, fmt.Errorf("the %s CRD is missing the v1 version, please upgrade to Gateway API v1.1.1 or later", name)
+			}
 		} else if kerrors.IsNotFound(err) {
 			// No action if CRD is not found.
 		} else {
@@ -236,6 +240,15 @@ func checkGatewayAPICRDs(ctx context.Context, k8sAPI *k8s.KubernetesAPI) (Gatewa
 		}
 	}
 	return result, nil
+}
+
+func crdIncludesV1(crd *v1.CustomResourceDefinition) bool {
+	for _, version := range crd.Spec.Versions {
+		if version.Name == "v1" {
+			return true
+		}
+	}
+	return false
 }
 
 func installCRDs(ctx context.Context, k8sAPI *k8s.KubernetesAPI, w io.Writer, options valuespkg.Options, format string) error {
@@ -394,7 +407,11 @@ func validateFinalValues(installed GatewayAPICRDs, finalValues map[string]interf
 	if installed == Absent {
 		if !installing {
 			// if we are not installing GW API Resources and they are not present, error
-			return errors.New("The Gateway API CRDs must be installed prior to installing Linkerd: https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api")
+			return errors.New(`The Gateway API CRDs must be installed prior to installing Linkerd. Run:
+
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+
+or see https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api for more options.`)
 		}
 	} else if installed == Linkerd {
 		if !installing {
